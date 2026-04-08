@@ -34,7 +34,7 @@ def answer_fn(user_question):
 if NGROK_TOKEN:
     ngrok.set_auth_token(NGROK_TOKEN)
     public_url = ngrok.connect(7860).public_url
-    print(f"\n YOUR WEBSITE API ENDPOINT: {public_url}\n")
+    print(f"\n YOUR WEBSITE API ENDPOINT: {public_url}\n") #https://virescent-compulsorily-keyla.ngrok-free.dev
 
 # 5. Launch API Server
 iface = gr.Interface(
