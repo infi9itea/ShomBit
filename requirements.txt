@@ -1,0 +1,12 @@
+transformers
+bitsandbytes
+accelerate
+langchain
+langchain-community
+langchain-huggingface
+faiss-cpu
+sentence-transformers
+gradio
+beautifulsoup4
+requests
+pyngrok
