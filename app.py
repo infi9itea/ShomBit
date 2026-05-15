@@ -1,47 +1,125 @@
+import logging
 import os
-import gradio as gr
-from pyngrok import ngrok
-from huggingface_hub import login
-from data_pipeline import load_json_docs, chunk_documents, scrape_dynamic_docs
-from rag_core import build_vectorstore, Reranker, load_llm, build_rag_chain
+import sys
 
-HF_TOKEN = os.environ.get("HF_TOKEN")
-NGROK_TOKEN = os.environ.get("NGROK_TOKEN")
-DATA_DIR = os.environ.get("DATA_DIR", "./data")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+log = logging.getLogger(__name__)
+
+from huggingface_hub import login
+from config import HF_TOKEN, NGROK_TOKEN
+
+if not HF_TOKEN:
+    log.error("HF_TOKEN is not set. Exiting.")
+    sys.exit(1)
 
 login(HF_TOKEN)
 
-print("Starting Data Pipeline...")
-all_docs = chunk_documents(load_json_docs(DATA_DIR)) + chunk_documents(scrape_dynamic_docs())
+from data_pipeline import load_json_docs, chunk_documents, scrape_dynamic_docs
+from rag_core import build_vectorstore, Reranker, load_llm, build_rag_chain
+from config import DATA_DIR
 
-print("Loading Models...")
+log.info("=== Starting EWU RAG Pipeline ===")
+
+log.info("Step 1/4  Loading and chunking documents…")
+json_docs    = chunk_documents(load_json_docs(DATA_DIR))
+scraped_docs = chunk_documents(scrape_dynamic_docs())
+all_docs     = json_docs + scraped_docs
+log.info("Total chunks: %d", len(all_docs))
+
+log.info("Step 2/4  Building vectorstore…")
 vectorstore, bm25, all_docs = build_vectorstore(all_docs)
+
+log.info("Step 3/4  Loading reranker and LLM…")
 reranker = Reranker()
-llm = load_llm(HF_TOKEN)
+llm      = load_llm(HF_TOKEN)
+
+log.info("Step 4/4  Assembling RAG chain…")
 rag_chain = build_rag_chain(llm, vectorstore, bm25, all_docs, reranker)
 
-def answer_fn(user_question):
+
+def chat_fn(user_message: str, history: list[list]) -> tuple[str, list[list]]:
+
+    if not user_message.strip():
+        return "", history
+
+    internal_history = [(h[0], h[1]) for h in history if h[1] is not None]
+
     try:
-        response = rag_chain.invoke(user_question)
-        assistant_start = response.find("<|assistant|>")
-        if assistant_start != -1:
-            cleaned = response[assistant_start + len("<|assistant|>"):].strip()
-            return cleaned if cleaned else "I don't have enough information to answer that question."
-        return response.strip() or "I don't have enough information to answer that question."
-    except Exception as e:
-        return f" Error: {e}"
+        result = rag_chain(user_message, history=internal_history)
+        answer  = result["answer"]
+        sources = result["sources"]
+
+        if sources:
+            source_block = "\n\n📚 **Sources:**\n" + "\n".join(f"- {s}" for s in sources)
+            full_reply = answer + source_block
+        else:
+            full_reply = answer
+
+    except Exception as exc:
+        log.exception("Error during inference")
+        full_reply = f"⚠️ An error occurred: {exc}"
+
+    history.append([user_message, full_reply])
+    return "", history
+
+
+
+import gradio as gr
+
+with gr.Blocks(title="EWU Assistant", theme=gr.themes.Soft()) as demo:
+    gr.Markdown(
+        """
+        # 🎓 East West University Assistant
+        Ask anything about EWU — admissions, fees, faculty, grading, events, and more.
+        Questions in **English**, **Bangla**, or **Banglish** are all supported.
+        """
+    )
+
+    chatbot = gr.Chatbot(
+        label="EWU Assistant",
+        height=520,
+        bubble_full_width=False,
+        show_copy_button=True,
+    )
+
+    with gr.Row():
+        msg_box = gr.Textbox(
+            placeholder="Type your question here… (e.g. 'CSE vorti fee koto?')",
+            lines=2,
+            scale=9,
+            show_label=False,
+        )
+        send_btn = gr.Button("Send", variant="primary", scale=1)
+
+    with gr.Row():
+        clear_btn = gr.Button("🗑️ Clear conversation")
+
+    gr.Examples(
+        examples=[
+            "What is the tuition fee for CSE?",
+            "CSE vorti deadline kobe?",
+            "What are the grading rules at EWU?",
+            "Who are the faculty members of the CSE department?",
+            "কম্পিউটার বিজ্ঞান বিভাগে ভর্তির যোগ্যতা কি?",
+        ],
+        inputs=msg_box,
+    )
+
+    send_btn.click(chat_fn, [msg_box, chatbot], [msg_box, chatbot])
+    msg_box.submit(chat_fn, [msg_box, chatbot], [msg_box, chatbot])
+    clear_btn.click(lambda: ([], ""), None, [chatbot, msg_box])
+
 
 if NGROK_TOKEN:
-    ngrok.set_auth_token(NGROK_TOKEN)
-    public_url = ngrok.connect(7860).public_url
-    print(f"\n YOUR WEBSITE API ENDPOINT: {public_url}\n") #https://virescent-compulsorily-keyla.ngrok-free.dev
+    from pyngrok import ngrok as _ngrok
+    _ngrok.set_auth_token(NGROK_TOKEN)
+    public_url = _ngrok.connect(7860).public_url
+    log.info("Public URL: %s", public_url)
 
-# 5. Launch API Server
-iface = gr.Interface(
-    fn=answer_fn,
-    inputs=gr.Textbox(lines=2),
-    outputs=gr.Textbox(lines=15),
-    title="EWU RAG API"
-)
 
-iface.launch(server_name="0.0.0.0", server_port=7860, share=False)
+log.info("Launching Gradio server on 0.0.0.0:7860")
+demo.launch(server_name="0.0.0.0", server_port=7860, share=False)

@@ -86,5 +86,5 @@ def scrape_dynamic_docs():
                         metadata={"source": url, "category": category}
                     ))
             except Exception as e:
-                print(f"⚠️ Failed to scrape {url}: {e}")
+                print(f" Failed to scrape {url}: {e}")
     return docs
