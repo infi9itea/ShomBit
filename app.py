@@ -15,10 +15,10 @@ print("Starting Data Pipeline...")
 all_docs = chunk_documents(load_json_docs(DATA_DIR)) + chunk_documents(scrape_dynamic_docs())
 
 print("Loading Models...")
-vectorstore = build_vectorstore(all_docs)
+vectorstore, bm25, all_docs = build_vectorstore(all_docs)
 reranker = Reranker()
 llm = load_llm(HF_TOKEN)
-rag_chain = build_rag_chain(llm, vectorstore, reranker)
+rag_chain = build_rag_chain(llm, vectorstore, bm25, all_docs, reranker)
 
 def answer_fn(user_question):
     try:

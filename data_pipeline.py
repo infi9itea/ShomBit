@@ -64,7 +64,7 @@ def load_json_docs(data_directory):
             print(f"Error loading {file_name}: {e}")
     return docs
 
-def chunk_documents(docs, chunk_size=2000, overlap=200):
+def chunk_documents(docs, chunk_size=512, overlap=100):
     splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=overlap)
     return splitter.split_documents(docs)
 

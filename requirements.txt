@@ -10,3 +10,4 @@ gradio
 beautifulsoup4
 requests
 pyngrok
+rank-bm25

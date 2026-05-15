@@ -6,6 +6,9 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 from sentence_transformers import CrossEncoder
+from rank_bm25 import BM25Okapi
+from query_processing import expand_query
+import numpy as np
 
 def build_vectorstore(docs):
     embeddings = HuggingFaceEmbeddings(
@@ -13,7 +16,11 @@ def build_vectorstore(docs):
         model_kwargs={'device': 'cuda:0'},
         encode_kwargs={'normalize_embeddings': True}
     )
-    return FAISS.from_documents(docs, embeddings)
+    vectorstore = FAISS.from_documents(docs, embeddings)
+    texts = [doc.page_content for doc in docs]
+    tokenized_corpus = [text.lower().split() for text in texts]
+    bm25 = BM25Okapi(tokenized_corpus)
+    return vectorstore, bm25, docs
 
 class Reranker:
     def __init__(self, model_name="BAAI/bge-reranker-v2-m3"):
@@ -43,26 +50,106 @@ def load_llm(hf_token, model_id="mistralai/Ministral-8B-Instruct-2410"):
     )
     return HuggingFacePipeline(pipeline=pipeline)
 
-def build_rag_chain(llm, vectorstore, reranker):
-    def retrieve_and_rerank(question):
-        retrieved_docs = vectorstore.similarity_search(question, k=25)
-        dynamic_priority = [d for d in retrieved_docs if "ewubd.edu" in d.metadata.get("source", "")]
-        static_others = [d for d in retrieved_docs if "ewubd.edu" not in d.metadata.get("source", "")]
-        docs_to_rerank = dynamic_priority if dynamic_priority else static_others
-        reranked = reranker.rerank(question, docs_to_rerank[:8], top_k=8)
+def build_rag_chain(llm, vectorstore, bm25, all_docs, reranker):
+
+    def hybrid_retrieve(question, k_dense=15, k_sparse=10):
+
+        expanded_queries = expand_query(question)
+
+        dense_results = []
+
+        for q in expanded_queries:
+            dense_results.extend(
+                vectorstore.similarity_search(q, k=k_dense)
+            )
+
+        bm25_scores = []
+
+        for q in expanded_queries:
+            tokenized_query = q.lower().split()
+            scores = bm25.get_scores(tokenized_query)
+
+            top_indices = np.argsort(scores)[::-1][:k_sparse]
+
+            for idx in top_indices:
+                bm25_scores.append(all_docs[idx])
+
+        combined = dense_results + bm25_scores
+
+        unique_docs = []
+        seen = set()
+
+        for doc in combined:
+            content = doc.page_content
+
+            if content not in seen:
+                seen.add(content)
+                unique_docs.append(doc)
+
+        boosted_docs = []
+
+        for doc in unique_docs:
+
+            category = doc.metadata.get("category", "").lower()
+
+            boost = 0
+
+            q_lower = question.lower()
+
+            if "faculty" in q_lower and "faculty" in category:
+                boost += 2
+
+            if "fee" in q_lower and "tuition" in category:
+                boost += 2
+
+            boosted_docs.append((doc, boost))
+
+        boosted_docs.sort(key=lambda x: x[1], reverse=True)
+
+        docs_only = [d for d, _ in boosted_docs]
+
+        reranked = reranker.rerank(question, docs_only[:15], top_k=8)
+
         return "\n\n".join([doc.page_content for doc in reranked])
 
     template = """
     <|system|>
     You are a helpful and knowledgeable assistant for East West University (EWU).
-    Use only the provided context to answer questions. Answer in the same language the user asks in (English, standard Bangla, or Banglish).
-    If unsure, say: "I don't have enough information to answer that." / "আমার কাছে এই তথ্যটি নেই।"
+
+    Rules:
+    - Use ONLY the provided context.
+    - If the question is in English, answer in English.
+    - If the question is in Bangla, answer in Bangla.
+    - If the question is in Banglish, answer in formal Bangla script.
+    - Do not hallucinate.
+    - If unsure, say:
+      "I don't have enough information to answer that."
+      OR
+      "আমার কাছে এই তথ্যটি নেই।"
+
     </s>
+
     <|user|>
-    CONTEXT: {context}
-    QUESTION: {question}
+
+    CONTEXT:
+    {context}
+
+    QUESTION:
+    {question}
+
     </s>
+
     <|assistant|>
     """
+
     prompt = PromptTemplate.from_template(template)
-    return ({"context": retrieve_and_rerank, "question": RunnablePassthrough()} | prompt | llm | StrOutputParser())
+
+    return (
+        {
+            "context": hybrid_retrieve,
+            "question": RunnablePassthrough()
+        }
+        | prompt
+        | llm
+        | StrOutputParser()
+    )
