@@ -38,7 +38,17 @@ llm = load_llm()
 log.info("Step 4/4  Assembling RAG chain…")
 rag_chain = build_rag_chain(llm, vectorstore, bm25, all_docs, reranker)
 
-debug_query("What is the current application deadline for undergraduate programs?", vectorstore, bm25, all_docs, reranker)
+# ── TEMPORARY DEBUG — remove after diagnosis ──────────────────────
+from rag_core import debug_query
+TEST_QUERIES = [
+    "CSE tuition fee koto?",        # put your failing queries here
+    "What is the grading system?",
+    "vorti deadline kobe?",
+]
+for q in TEST_QUERIES:
+    debug_query(q, vectorstore, bm25, all_docs, reranker)
+# ─────────────────────────────────────────────────────────────────
+
 def chat_fn(user_message: str, history: list[dict]):
     """history is a list of {"role", "content"} dicts (Gradio type='messages')."""
     if not user_message.strip():
