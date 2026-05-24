@@ -41,9 +41,9 @@ rag_chain = build_rag_chain(llm, vectorstore, bm25, all_docs, reranker)
 # ── TEMPORARY DEBUG — remove after diagnosis ──────────────────────
 from rag_core import debug_query
 TEST_QUERIES = [
-    "CSE tuition fee koto?",        # put your failing queries here
-    "What is the grading system?",
-    "vorti deadline kobe?",
+    "Kono scholarship-er sujog ache ki?",        # put your failing queries here
+    "Computer Science-er bortoman tuition fee koto?",
+    "Undergraduate programgular bortoman vorti abedoner shesh shomoyshima ki?",
 ]
 for q in TEST_QUERIES:
     debug_query(q, vectorstore, bm25, all_docs, reranker)
