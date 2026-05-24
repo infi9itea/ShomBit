@@ -4,18 +4,20 @@ from typing import List, Tuple
 
 import numpy as np
 import torch
-import transformers
+from groq import Groq
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
-from langchain_huggingface import HuggingFaceEmbeddings, HuggingFacePipeline
+from langchain_huggingface import HuggingFaceEmbeddings
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
 
 from config import (
     EMBED_MODEL, RERANKER_MODEL, LLM_MODEL,
+    EMBED_DEVICE, RERANK_DEVICE,
     K_DENSE, K_SPARSE, RERANK_CANDIDATE, RERANK_TOP_K, RRF_K, CATEGORY_BOOST,
-    MAX_NEW_TOKENS, TEMPERATURE, TOP_P, REPETITION_PENALTY, DO_SAMPLE,
+    MAX_NEW_TOKENS, TEMPERATURE, TOP_P,
     VECTORSTORE_DIR, MAX_HISTORY_TURNS,
+    GROQ_API_KEY,
 )
 from query_processing import expand_query
 
@@ -26,10 +28,10 @@ log = logging.getLogger(__name__)
 # Vector store + BM25
 # ──────────────────────────────────────────────────────────────────
 def build_vectorstore(docs: List[Document]) -> Tuple[FAISS, BM25Okapi, List[Document]]:
-    log.info("Building embeddings with %s…", EMBED_MODEL)
+    log.info("Building embeddings with %s on %s…", EMBED_MODEL, EMBED_DEVICE)
     embeddings = HuggingFaceEmbeddings(
         model_name=EMBED_MODEL,
-        model_kwargs={"device": "cuda:0"},
+        model_kwargs={"device": EMBED_DEVICE},
         encode_kwargs={"normalize_embeddings": True},
     )
 
@@ -39,8 +41,6 @@ def build_vectorstore(docs: List[Document]) -> Tuple[FAISS, BM25Okapi, List[Docu
         vectorstore = FAISS.load_local(
             str(vs_path), embeddings, allow_dangerous_deserialization=True
         )
-        # CRITICAL: use the docs actually inside the index so BM25 / sparse /
-        # RRF all reference the identical document set.
         all_docs = list(vectorstore.docstore._dict.values())
         log.info("Recovered %d docs from cached index docstore", len(all_docs))
     else:
@@ -61,8 +61,13 @@ def build_vectorstore(docs: List[Document]) -> Tuple[FAISS, BM25Okapi, List[Docu
 # ──────────────────────────────────────────────────────────────────
 class Reranker:
     def __init__(self, model_name: str = RERANKER_MODEL):
-        log.info("Loading reranker: %s", model_name)
-        self.model = CrossEncoder(model_name, device="cuda:0")
+        log.info("Loading reranker: %s on %s", model_name, RERANK_DEVICE)
+        self.model = CrossEncoder(
+            model_name,
+            device=RERANK_DEVICE,
+            max_length=1024,
+            automodel_args={"torch_dtype": torch.bfloat16},
+        )
 
     def rerank(self, query: str, docs: List[Document], top_k: int = RERANK_TOP_K):
         if not docs:
@@ -74,41 +79,20 @@ class Reranker:
 
 
 # ──────────────────────────────────────────────────────────────────
-# LLM
+# LLM (Groq)
 # ──────────────────────────────────────────────────────────────────
-def load_llm(hf_token: str, model_id: str = LLM_MODEL) -> HuggingFacePipeline:
-    log.info("Loading LLM: %s", model_id)
-    bnb_config = transformers.BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_compute_dtype=torch.bfloat16,
-    )
-    model = transformers.AutoModelForCausalLM.from_pretrained(
-        model_id, token=hf_token, quantization_config=bnb_config,
-        device_map="auto", trust_remote_code=True,
-    )
-    tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, token=hf_token)
-
-    gen_kwargs = dict(
-        max_new_tokens=MAX_NEW_TOKENS,
-        repetition_penalty=REPETITION_PENALTY,
-        do_sample=DO_SAMPLE,
-        pad_token_id=tokenizer.eos_token_id,
-        return_full_text=False,   # output is only the completion -> no marker parsing
-    )
-    if DO_SAMPLE:                 # sampling params are only valid when sampling
-        gen_kwargs.update(temperature=TEMPERATURE, top_p=TOP_P)
-
-    pipe = transformers.pipeline("text-generation", model=model, tokenizer=tokenizer, **gen_kwargs)
-    return HuggingFacePipeline(pipeline=pipe)
+def load_llm(model_id: str = LLM_MODEL):
+    log.info("Initialising Groq client with model: %s", model_id)
+    if not GROQ_API_KEY:
+        raise ValueError("GROQ_API_KEY is not set.")
+    client = Groq(api_key=GROQ_API_KEY)
+    return client, model_id
 
 
 # ──────────────────────────────────────────────────────────────────
-# Fusion + prompt
+# Fusion
 # ──────────────────────────────────────────────────────────────────
 def _reciprocal_rank_fusion(ranked_lists: List[List[Document]], k: int = RRF_K):
-    """Return (scores_by_key, doc_by_key)."""
     scores: dict[str, float] = {}
     doc_map: dict[str, Document] = {}
     for ranked in ranked_lists:
@@ -119,6 +103,9 @@ def _reciprocal_rank_fusion(ranked_lists: List[List[Document]], k: int = RRF_K):
     return scores, doc_map
 
 
+# ──────────────────────────────────────────────────────────────────
+# System prompt
+# ──────────────────────────────────────────────────────────────────
 _SYSTEM = (
     "You are a helpful, knowledgeable assistant for East West University (EWU), "
     "Bangladesh. Answer using ONLY the provided context; never invent information.\n"
@@ -133,33 +120,11 @@ _SYSTEM = (
 )
 
 
-def _build_prompt(tokenizer, history: List[Tuple[str, str]], context: str, question: str) -> str:
-    user_content = f"CONTEXT:\n{context}\n\nQUESTION:\n{question}"
-    turns = history[-MAX_HISTORY_TURNS:]
-    messages = [{"role": "system", "content": _SYSTEM}]
-    for u, a in turns:
-        messages.append({"role": "user", "content": u})
-        messages.append({"role": "assistant", "content": a})
-    messages.append({"role": "user", "content": user_content})
-    try:
-        return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    except Exception:
-        # Some Mistral templates reject a system role: fold system into 1st user msg.
-        conv, first = [], True
-        for u, a in turns:
-            conv.append({"role": "user", "content": (_SYSTEM + "\n\n" + u) if first else u})
-            conv.append({"role": "assistant", "content": a})
-            first = False
-        conv.append({"role": "user", "content": (_SYSTEM + "\n\n" + user_content) if first else user_content})
-        return tokenizer.apply_chat_template(conv, tokenize=False, add_generation_prompt=True)
-
-
 # ──────────────────────────────────────────────────────────────────
 # Chain
 # ──────────────────────────────────────────────────────────────────
 def build_rag_chain(llm, vectorstore, bm25, all_docs, reranker):
-    """Returns chain(question, history=[]) -> {answer, sources, contexts}."""
-    tokenizer = llm.pipeline.tokenizer
+    client, model_id = llm
 
     _BOOSTS: List[Tuple[str, str, int]] = [
         ("faculty", "faculty", 3), ("teacher", "faculty", 3),
@@ -183,7 +148,6 @@ def build_rag_chain(llm, vectorstore, bm25, all_docs, reranker):
 
         fused_scores, doc_map = _reciprocal_rank_fusion(dense_lists + sparse_lists, RRF_K)
 
-        # additive category bonus (does not override semantic ranking)
         for key, doc in doc_map.items():
             cat = doc.metadata.get("category", "").lower()
             bonus = sum(pts for kw, cat_m, pts in _BOOSTS if kw in q_lower and cat_m in cat)
@@ -197,19 +161,36 @@ def build_rag_chain(llm, vectorstore, bm25, all_docs, reranker):
         context_docs = [doc for doc, _ in reranked]
         context_text = "\n\n".join(d.page_content for d in context_docs)
 
-        # ordered, de-duplicated source list (preserves rank for retrieval metrics)
         sources = list(dict.fromkeys(
             d.metadata.get("source", "") for d in context_docs
             if d.metadata.get("source", "").startswith("http")
         ))
         return context_text, sources, [d.page_content for d in context_docs]
 
+    def _call_groq(history: list, context: str, question: str) -> str:
+        user_content = f"CONTEXT:\n{context}\n\nQUESTION:\n{question}"
+        turns = history[-MAX_HISTORY_TURNS:]
+
+        messages = [{"role": "system", "content": _SYSTEM}]
+        for u, a in turns:
+            messages.append({"role": "user",      "content": u})
+            messages.append({"role": "assistant", "content": a})
+        messages.append({"role": "user", "content": user_content})
+
+        resp = client.chat.completions.create(
+            model=model_id,
+            messages=messages,
+            max_tokens=MAX_NEW_TOKENS,
+            temperature=TEMPERATURE,
+            top_p=TOP_P,
+        )
+        return resp.choices[0].message.content.strip()
+
     def chain(question: str, history=None) -> dict:
         history = history or []
         context_text, sources, contexts = retrieve(question)
-        prompt = _build_prompt(tokenizer, history, context_text, question)
-        raw = llm.invoke(prompt)
-        answer = raw.strip() or "I don't have enough information to answer that."
+        answer = _call_groq(history, context_text, question)
+        answer = answer or "I don't have enough information to answer that."
         return {"answer": answer, "sources": sources, "contexts": contexts}
 
     return chain

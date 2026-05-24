@@ -1,6 +1,7 @@
 import logging
 import sys
-
+from config import HF_TOKEN, NGROK_TOKEN, DATA_DIR   # GROQ_API_KEY not needed here, rag_core reads it directly
+from rag_core import build_vectorstore, Reranker, load_llm, build_rag_chain
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
@@ -12,7 +13,7 @@ from huggingface_hub import login
 from config import HF_TOKEN, NGROK_TOKEN, DATA_DIR
 
 if not HF_TOKEN:
-    log.error("HF_TOKEN is not set. Exiting.")
+    log.warning("HF_TOKEN is not set — embedding and reranker models may fail.")
     sys.exit(1)
 login(HF_TOKEN)
 
@@ -32,7 +33,7 @@ vectorstore, bm25, all_docs = build_vectorstore(all_docs)
 
 log.info("Step 3/4  Loading reranker and LLM…")
 reranker = Reranker()
-llm = load_llm(HF_TOKEN)
+llm = load_llm()
 
 log.info("Step 4/4  Assembling RAG chain…")
 rag_chain = build_rag_chain(llm, vectorstore, bm25, all_docs, reranker)
