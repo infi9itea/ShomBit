@@ -102,7 +102,41 @@ def _reciprocal_rank_fusion(ranked_lists: List[List[Document]], k: int = RRF_K):
             doc_map[key] = doc
     return scores, doc_map
 
+def debug_query(question: str, vectorstore, bm25, all_docs, reranker):
+    """Call this directly to see exactly what the pipeline retrieves."""
+    expanded = expand_query(question)
+    print(f"\n{'='*60}")
+    print(f"Original query: {question}")
+    print(f"Expanded variants: {expanded}")
 
+    # dense results
+    print(f"\n--- Dense retrieval (top 3 per variant) ---")
+    for q in expanded:
+        results = vectorstore.similarity_search(q, k=3)
+        print(f"\n  variant: '{q}'")
+        for i, d in enumerate(results):
+            print(f"  [{i+1}] source={d.metadata.get('source','')} | {d.page_content[:120]!r}")
+
+    # sparse results
+    print(f"\n--- BM25 sparse retrieval (top 3) ---")
+    scores = bm25.get_scores(question.lower().split())
+    top_idx = np.argsort(scores)[::-1][:3]
+    for i in top_idx:
+        print(f"  score={scores[i]:.3f} | {all_docs[i].page_content[:120]!r}")
+
+    # after reranking
+    print(f"\n--- After rerank (final context) ---")
+    dense_lists = [vectorstore.similarity_search(q, k=K_DENSE) for q in expanded]
+    sparse_scores = bm25.get_scores(question.lower().split())
+    sparse_top = np.argsort(sparse_scores)[::-1][:K_SPARSE]
+    sparse_lists = [[all_docs[i] for i in sparse_top]]
+    fused_scores, doc_map = _reciprocal_rank_fusion(dense_lists + sparse_lists, RRF_K)
+    ordered = sorted(doc_map, key=lambda k: fused_scores[k], reverse=True)
+    candidates = [doc_map[k] for k in ordered[:RERANK_CANDIDATE]]
+    reranked = reranker.rerank(question, candidates, top_k=RERANK_TOP_K)
+    for i, (doc, score) in enumerate(reranked):
+        print(f"  [{i+1}] rerank_score={score:.3f} source={doc.metadata.get('source','')} | {doc.page_content[:150]!r}")
+    print('='*60)
 # ──────────────────────────────────────────────────────────────────
 # System prompt
 # ──────────────────────────────────────────────────────────────────
