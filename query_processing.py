@@ -145,6 +145,23 @@ LEXICON: Dict[str, Tuple[str, str]] = {
     "phone": ("ফোন", "phone"),
     "address": ("ঠিকানা", "address"),
     "location": ("অবস্থান", "location"),
+
+    # Time / deadline terms missing from lexicon
+    "shomoyshima":  ("সময়সীমা",    "deadline"),
+    "shesh shomoy": ("শেষ সময়",   "last date"),
+    "shesh din":    ("শেষ দিন",    "last day"),
+    "abedoner":     ("আবেদনের",    "application"),
+    "abedon":       ("আবেদন",      "application"),
+    "bortoman":     ("বর্তমান",    "current"),
+    "shomoy":       ("সময়",        "time"),
+    "shima":        ("সীমা",       "limit"),
+    "kivabe":       ("কীভাবে",     "how to"),
+    "shuvidha":     ("সুবিধা",     "benefit"),
+    "sujog":        ("সুযোগ",      "opportunity"),
+    "programgular": ("প্রোগ্রামগুলোর", "programs"),
+    "kono":         ("কোনো",       "any"),
+    "ache":         ("আছে",        "available"),
+    "jানতে":        ("জানতে",      "to know"),
 }
 
 # Two-char folds applied before single-char folds. These are intentionally

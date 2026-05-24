@@ -1,4 +1,6 @@
 import os
+import shutil
+shutil.rmtree("./vectorstore", ignore_errors=True)
 
 # ── Secrets / tokens ──────────────────────────────────────────────
 HF_TOKEN    = os.environ.get("HF_TOKEN", "")
@@ -20,14 +22,14 @@ EMBED_DEVICE   = "cuda:0"
 RERANK_DEVICE  = "cuda:1"
 
 # ── Chunking ──────────────────────────────────────────────────────
-CHUNK_SIZE    = 512
-CHUNK_OVERLAP = 100
+CHUNK_SIZE    = 256
+CHUNK_OVERLAP = 50
 
 # ── Retrieval / fusion ────────────────────────────────────────────
 K_DENSE          = 15
 K_SPARSE         = 10
-RERANK_CANDIDATE = 20
-RERANK_TOP_K     = 6
+RERANK_CANDIDATE = 30
+RERANK_TOP_K     = 8
 RRF_K            = 60
 CATEGORY_BOOST   = 0.02
 
