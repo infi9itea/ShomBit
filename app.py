@@ -1,5 +1,4 @@
 import logging
-import os
 import sys
 
 logging.basicConfig(
@@ -10,24 +9,22 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 from huggingface_hub import login
-from config import HF_TOKEN, NGROK_TOKEN
+from config import HF_TOKEN, NGROK_TOKEN, DATA_DIR
 
 if not HF_TOKEN:
     log.error("HF_TOKEN is not set. Exiting.")
     sys.exit(1)
-
 login(HF_TOKEN)
 
 from data_pipeline import load_json_docs, chunk_documents, scrape_dynamic_docs
 from rag_core import build_vectorstore, Reranker, load_llm, build_rag_chain
-from config import DATA_DIR
 
 log.info("=== Starting EWU RAG Pipeline ===")
 
 log.info("Step 1/4  Loading and chunking documents…")
-json_docs    = chunk_documents(load_json_docs(DATA_DIR))
+json_docs = chunk_documents(load_json_docs(DATA_DIR))
 scraped_docs = chunk_documents(scrape_dynamic_docs())
-all_docs     = json_docs + scraped_docs
+all_docs = json_docs + scraped_docs
 log.info("Total chunks: %d", len(all_docs))
 
 log.info("Step 2/4  Building vectorstore…")
@@ -35,37 +32,41 @@ vectorstore, bm25, all_docs = build_vectorstore(all_docs)
 
 log.info("Step 3/4  Loading reranker and LLM…")
 reranker = Reranker()
-llm      = load_llm(HF_TOKEN)
+llm = load_llm(HF_TOKEN)
 
 log.info("Step 4/4  Assembling RAG chain…")
 rag_chain = build_rag_chain(llm, vectorstore, bm25, all_docs, reranker)
 
 
-def chat_fn(user_message: str, history: list[list]) -> tuple[str, list[list]]:
-
+def chat_fn(user_message: str, history: list[dict]):
+    """history is a list of {"role", "content"} dicts (Gradio type='messages')."""
     if not user_message.strip():
         return "", history
 
-    internal_history = [(h[0], h[1]) for h in history if h[1] is not None]
+    # reconstruct (user, assistant) pairs for the LLM's short-term memory
+    internal, pending = [], None
+    for m in history:
+        if m["role"] == "user":
+            pending = m["content"]
+        elif m["role"] == "assistant" and pending is not None:
+            internal.append((pending, m["content"]))
+            pending = None
 
     try:
-        result = rag_chain(user_message, history=internal_history)
-        answer  = result["answer"]
+        result = rag_chain(user_message, history=internal)
+        answer = result["answer"]
         sources = result["sources"]
-
         if sources:
-            source_block = "\n\n📚 **Sources:**\n" + "\n".join(f"- {s}" for s in sources)
-            full_reply = answer + source_block
-        else:
-            full_reply = answer
-
+            answer += "\n\n📚 **Sources:**\n" + "\n".join(f"- {s}" for s in sources)
     except Exception as exc:
         log.exception("Error during inference")
-        full_reply = f"⚠️ An error occurred: {exc}"
+        answer = f"⚠️ An error occurred: {exc}"
 
-    history.append([user_message, full_reply])
+    history = history + [
+        {"role": "user", "content": user_message},
+        {"role": "assistant", "content": answer},
+    ]
     return "", history
-
 
 
 import gradio as gr
@@ -81,17 +82,15 @@ with gr.Blocks(title="EWU Assistant", theme=gr.themes.Soft()) as demo:
 
     chatbot = gr.Chatbot(
         label="EWU Assistant",
+        type="messages",
         height=520,
-        bubble_full_width=False,
         show_copy_button=True,
     )
 
     with gr.Row():
         msg_box = gr.Textbox(
             placeholder="Type your question here… (e.g. 'CSE vorti fee koto?')",
-            lines=2,
-            scale=9,
-            show_label=False,
+            lines=2, scale=9, show_label=False,
         )
         send_btn = gr.Button("Send", variant="primary", scale=1)
 
@@ -119,7 +118,6 @@ if NGROK_TOKEN:
     _ngrok.set_auth_token(NGROK_TOKEN)
     public_url = _ngrok.connect(7860).public_url
     log.info("Public URL: %s", public_url)
-
 
 log.info("Launching Gradio server on 0.0.0.0:7860")
 demo.launch(server_name="0.0.0.0", server_port=7860, share=False)

@@ -1,34 +1,45 @@
 import os
 
+# ── Secrets / tokens ──────────────────────────────────────────────
 HF_TOKEN    = os.environ.get("HF_TOKEN", "")
 NGROK_TOKEN = os.environ.get("NGROK_TOKEN", "")
 
+# ── Paths ─────────────────────────────────────────────────────────
 DATA_DIR        = os.environ.get("DATA_DIR", "./data")
-CACHE_DIR       = os.environ.get("CACHE_DIR", "./cache")      # scraped-page cache
+CACHE_DIR       = os.environ.get("CACHE_DIR", "./cache")            # scraped-page cache
 VECTORSTORE_DIR = os.environ.get("VECTORSTORE_DIR", "./vectorstore")
 
+# ── Models ────────────────────────────────────────────────────────
 EMBED_MODEL    = "BAAI/bge-m3"
 RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 LLM_MODEL      = "mistralai/Ministral-8B-Instruct-2410"
 
+# ── Chunking ──────────────────────────────────────────────────────
 CHUNK_SIZE    = 512
 CHUNK_OVERLAP = 100
 
-K_DENSE          = 15   
-K_SPARSE         = 10   
-RERANK_CANDIDATE = 20   
-RERANK_TOP_K     = 6    
+# ── Retrieval / fusion ────────────────────────────────────────────
+K_DENSE          = 15
+K_SPARSE         = 10
+RERANK_CANDIDATE = 20
+RERANK_TOP_K     = 6
+RRF_K            = 60       # reciprocal-rank-fusion constant
+CATEGORY_BOOST   = 0.02     # additive bonus folded INTO the fused score (not a hard re-sort)
 
+# ── Generation ────────────────────────────────────────────────────
 MAX_NEW_TOKENS     = 768
 TEMPERATURE        = 0.3
 TOP_P              = 0.9
 REPETITION_PENALTY = 1.05
+DO_SAMPLE          = True   # set False for fully deterministic / reproducible eval runs
 
-MAX_HISTORY_TURNS = 4   
+MAX_HISTORY_TURNS = 4
 
-SCRAPE_TIMEOUT       = 15   
-SCRAPE_CACHE_TTL_H   = 6    
-SCRAPE_MAX_WORKERS   = 8    
+# ── Scraping ──────────────────────────────────────────────────────
+SCRAPE_TIMEOUT     = 15
+SCRAPE_CACHE_TTL_H = 6      # re-scrape a page only if its cache is older than this
+SCRAPE_MAX_WORKERS = 8
+SCRAPE_RETRIES     = 2
 
 DYNAMIC_URLS = {
     "Admission deadlines": [
