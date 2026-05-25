@@ -1,7 +1,7 @@
 import logging
 import sys
 from config import HF_TOKEN, NGROK_TOKEN, DATA_DIR   # GROQ_API_KEY not needed here, rag_core reads it directly
-from data_pipeline import load_json_docs, chunk_documents, scrape_dynamic_docs
+from data_pipeline import load_json_docs, load_markdown_docs, chunk_documents, scrape_dynamic_docs
 from rag_core import build_vectorstore, Reranker, load_llm, build_rag_chain  # add to import
 logging.basicConfig(
     level=logging.INFO,
