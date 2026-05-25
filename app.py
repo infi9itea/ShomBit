@@ -2,6 +2,7 @@ import logging
 import sys
 from config import HF_TOKEN, NGROK_TOKEN, DATA_DIR   # GROQ_API_KEY not needed here, rag_core reads it directly
 from rag_core import build_vectorstore, Reranker, load_llm, build_rag_chain
+from data_pipeline import load_markdown_docs  # add to import
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
@@ -23,9 +24,10 @@ from rag_core import build_vectorstore, Reranker, load_llm, build_rag_chain
 log.info("=== Starting EWU RAG Pipeline ===")
 
 log.info("Step 1/4  Loading and chunking documents…")
-json_docs = chunk_documents(load_json_docs(DATA_DIR))
+
+md_docs = chunk_documents(load_markdown_docs(DATA_DIR))
 scraped_docs = chunk_documents(scrape_dynamic_docs())
-all_docs = json_docs + scraped_docs
+all_docs = md_docs + scraped_doc
 log.info("Total chunks: %d", len(all_docs))
 
 log.info("Step 2/4  Building vectorstore…")

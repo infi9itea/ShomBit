@@ -122,10 +122,10 @@ def evaluate_system(gold_path: str, out_csv: str, with_ragas: bool = True):
     from config import HF_TOKEN, DATA_DIR
     if HF_TOKEN:
         login(HF_TOKEN)
-    from data_pipeline import load_json_docs, chunk_documents, scrape_dynamic_docs
+    from data_pipeline import load_markdown_docs, chunk_documents, scrape_dynamic_docs
     from rag_core import build_vectorstore, Reranker, load_llm, build_rag_chain
 
-    docs = chunk_documents(load_json_docs(DATA_DIR)) + chunk_documents(scrape_dynamic_docs())
+    docs = chunk_documents(load_markdown_docs(DATA_DIR)) + chunk_documents(scrape_dynamic_docs())
     vectorstore, bm25, docs = build_vectorstore(docs)
     chain = build_rag_chain(load_llm(HF_TOKEN), vectorstore, bm25, docs, Reranker())
 

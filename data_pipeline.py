@@ -1,5 +1,6 @@
 import os
 import json
+import frontmatter
 import time
 import hashlib
 import logging
@@ -73,11 +74,36 @@ def chunk_documents(docs, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=overlap,
-        separators=["\n\n", "\n", "। ", ". ", " ", ""],  # includes Bangla danda
+        separators=["\n## ", "\n### ", "\n\n", "\n", "। ", ". ", " ", ""],
     )
     return splitter.split_documents(docs)
 
 
+def load_markdown_docs(data_directory: str = DATA_DIR):
+    docs = []
+    log.info("Loading Markdown files from %s", data_directory)
+    if not os.path.isdir(data_directory):
+        log.warning("Data directory does not exist: %s", data_directory)
+        return docs
+    for root, _dirs, files in os.walk(data_directory):
+        for file_name in files:
+            if not file_name.endswith(".md"):
+                continue
+            file_path = os.path.join(root, file_name)
+            try:
+                post = frontmatter.load(file_path)
+                docs.append(Document(
+                    page_content=post.content,
+                    metadata={
+                        **post.metadata,
+                        "source": post.metadata.get("source", file_path),
+                        "type": "markdown",
+                    }
+                ))
+            except Exception as e:
+                log.error("Error loading %s: %s", file_name, e)
+    log.info("Loaded %d markdown documents", len(docs))
+    return docs
 # ──────────────────────────────────────────────────────────────────
 # Web scraping (cached, parallel, retrying)
 # ──────────────────────────────────────────────────────────────────
