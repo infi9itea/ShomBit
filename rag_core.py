@@ -143,8 +143,6 @@ def debug_query(question: str, vectorstore, bm25, all_docs, reranker):
 _SYSTEM = (
     "You are a helpful, knowledgeable assistant for East West University (EWU), "
     "Bangladesh. Answer using ONLY the provided context; never invent information.\n"
-    "The context may contain JSON-style key paths like 'fees.cse.per_credit: 3500' — "
-    "interpret these as structured data and synthesize a natural answer from them.\n"
     "Match the language of the question:\n"
     "  - English question -> answer in English\n"
     "  - Bangla question -> answer in Bangla\n"
