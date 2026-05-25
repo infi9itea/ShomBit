@@ -27,7 +27,7 @@ log.info("Step 1/4  Loading and chunking documents…")
 
 md_docs = chunk_documents(load_markdown_docs(DATA_DIR))
 scraped_docs = chunk_documents(scrape_dynamic_docs())
-all_docs = md_docs + scraped_doc
+all_docs = md_docs + scraped_docs
 log.info("Total chunks: %d", len(all_docs))
 
 log.info("Step 2/4  Building vectorstore…")
