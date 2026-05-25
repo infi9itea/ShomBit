@@ -1,5 +1,6 @@
 import logging
 import sys
+from huggingface_hub import login
 from config import HF_TOKEN, NGROK_TOKEN, DATA_DIR   # GROQ_API_KEY not needed here, rag_core reads it directly
 from rag_core import build_vectorstore, Reranker, load_llm, build_rag_chain
 from data_pipeline import load_json_docs, load_markdown_docs, chunk_documents, scrape_dynamic_docs
@@ -9,9 +10,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 log = logging.getLogger(__name__)
-
-from huggingface_hub import login
-from config import HF_TOKEN, NGROK_TOKEN, DATA_DIR
 
 if not HF_TOKEN:
     log.warning("HF_TOKEN is not set — embedding and reranker models may fail.")
