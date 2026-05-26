@@ -51,8 +51,9 @@ def build_vectorstore(docs: List[Document]) -> Tuple[FAISS, BM25Okapi, List[Docu
         all_docs = docs
         log.info("FAISS index saved to %s", vs_path)
 
+    from query_processing import _TOKEN_RE
     texts = [d.page_content for d in all_docs]
-    bm25 = BM25Okapi([t.lower().split() for t in texts])
+    bm25 = BM25Okapi([_TOKEN_RE.findall(t.lower()) for t in texts])
     return vectorstore, bm25, all_docs
 
 
@@ -97,7 +98,7 @@ def _reciprocal_rank_fusion(ranked_lists: List[List[Document]], k: int = RRF_K):
     doc_map: dict[str, Document] = {}
     for ranked in ranked_lists:
         for rank, doc in enumerate(ranked, start=1):
-            key = doc.page_content
+            key = f"{doc.page_content}||{doc.metadata.get('source', '')}"
             scores[key] = scores.get(key, 0.0) + 1.0 / (k + rank)
             doc_map[key] = doc
     return scores, doc_map
@@ -157,28 +158,44 @@ _SYSTEM = (
 # ──────────────────────────────────────────────────────────────────
 # Chain
 # ──────────────────────────────────────────────────────────────────
-def build_rag_chain(llm, vectorstore, bm25, all_docs, reranker):
+def build_rag_chain(llm, vectorstore, bm25, all_docs, reranker,
+                    ablation_mode: str = "full"):
+    """
+    ablation_mode:
+      "full"         — complete pipeline (default)
+      "no_expansion" — raw query only, no expand_query
+      "no_rerank"    — skip cross-encoder reranking, use RRF top-k directly
+      "dense_only"   — dense retrieval only, no BM25 sparse lists
+    """
     client, model_id = llm
+    from query_processing import _TOKEN_RE
 
     _BOOSTS: List[Tuple[str, str, int]] = [
         ("faculty", "faculty", 3), ("teacher", "faculty", 3),
         ("fee", "tuition fees", 3), ("tuition", "tuition fees", 3),
-        ("scholarship", "tuition fees", 2),
-        ("deadline", "admission deadlines", 3), ("admission", "admission deadlines", 2),
-        ("grade", "grading", 2), ("cgpa", "grading", 2),
+        ("scholarship", "tuition fees", 2), ("waiver", "tuition fees", 2),
+        ("deadline", "admission deadlines", 3), ("deadline", "admission process", 3),
+        ("admission", "admission deadlines", 2), ("admission", "admission process", 2),
+        ("vorti", "admission process", 2), ("vorti", "admission requirements", 2),
+        ("requirement", "admission requirements", 3), ("eligib", "admission requirements", 3),
+        ("cgpa", "admission requirements", 2),
+        ("grade", "grading", 2), ("cgpa", "grading", 2), ("result", "grading", 2),
     ]
 
     def retrieve(question: str):
-        expanded = expand_query(question)
+        expanded = [question] if ablation_mode == "no_expansion" else expand_query(question)
         q_lower = question.lower()
 
         dense_lists = [vectorstore.similarity_search(q, k=K_DENSE) for q in expanded]
 
-        sparse_lists = []
-        for q in expanded:
-            scores = bm25.get_scores(q.lower().split())
-            top_idx = np.argsort(scores)[::-1][:K_SPARSE]
-            sparse_lists.append([all_docs[i] for i in top_idx])
+        if ablation_mode == "dense_only":
+            sparse_lists = []
+        else:
+            sparse_lists = []
+            for q in expanded:
+                scores = bm25.get_scores(_TOKEN_RE.findall(q.lower()))
+                top_idx = np.argsort(scores)[::-1][:K_SPARSE]
+                sparse_lists.append([all_docs[i] for i in top_idx])
 
         fused_scores, doc_map = _reciprocal_rank_fusion(dense_lists + sparse_lists, RRF_K)
 
@@ -189,15 +206,18 @@ def build_rag_chain(llm, vectorstore, bm25, all_docs, reranker):
                 fused_scores[key] += bonus * CATEGORY_BOOST
 
         ordered = sorted(doc_map, key=lambda k: fused_scores[k], reverse=True)
-        candidates = [doc_map[k] for k in ordered[:RERANK_CANDIDATE]]
 
-        reranked = reranker.rerank(question, candidates, top_k=RERANK_TOP_K)
-        context_docs = [doc for doc, _ in reranked]
+        if ablation_mode == "no_rerank":
+            context_docs = [doc_map[k] for k in ordered[:RERANK_TOP_K]]
+        else:
+            candidates = [doc_map[k] for k in ordered[:RERANK_CANDIDATE]]
+            reranked = reranker.rerank(question, candidates, top_k=RERANK_TOP_K)
+            context_docs = [doc for doc, _ in reranked]
+
         context_text = "\n\n".join(d.page_content for d in context_docs)
-
         sources = list(dict.fromkeys(
             d.metadata.get("source", "") for d in context_docs
-            if d.metadata.get("source", "").startswith("http")
+            if d.metadata.get("source", "")
         ))
         return context_text, sources, [d.page_content for d in context_docs]
 

@@ -1,6 +1,5 @@
 import os
-import shutil
-shutil.rmtree("./vectorstore", ignore_errors=True)
+
 
 # ── Secrets / tokens ──────────────────────────────────────────────
 HF_TOKEN    = os.environ.get("HF_TOKEN", "")
@@ -18,12 +17,20 @@ RERANKER_MODEL = "BAAI/bge-reranker-v2-gemma"
 LLM_MODEL      = "llama-3.3-70b-versatile"
 
 # ── GPU assignment ────────────────────────────────────────────────
-EMBED_DEVICE   = "cuda:0"
-RERANK_DEVICE  = "cuda:1"
+def _gpu_count() -> int:
+    try:
+        import torch
+        return torch.cuda.device_count() if torch.cuda.is_available() else 0
+    except Exception:
+        return 0
+
+_gpus = _gpu_count()
+EMBED_DEVICE  = "cuda:0" if _gpus >= 1 else "cpu"
+RERANK_DEVICE = "cuda:1" if _gpus >= 2 else ("cuda:0" if _gpus >= 1 else "cpu")
 
 # ── Chunking ──────────────────────────────────────────────────────
-CHUNK_SIZE    = 256
-CHUNK_OVERLAP = 50
+CHUNK_SIZE    = 512
+CHUNK_OVERLAP = 64
 
 # ── Retrieval / fusion ────────────────────────────────────────────
 K_DENSE          = 15

@@ -101,8 +101,6 @@ LEXICON: Dict[str, Tuple[str, str]] = {
     "kobe": ("কবে", "when"),
     "kothay": ("কোথায়", "where"),
     "keno": ("কেন", "why"),
-    "kivabe": ("কীভাবে", "how"),
-    "ache": ("আছে", "is there"),
     "nai": ("নেই", "none"),
     "jonno": ("জন্য", "for"),
     "somporke": ("সম্পর্কে", "about"),
@@ -161,7 +159,7 @@ LEXICON: Dict[str, Tuple[str, str]] = {
     "programgular": ("প্রোগ্রামগুলোর", "programs"),
     "kono":         ("কোনো",       "any"),
     "ache":         ("আছে",        "available"),
-    "jানতে":        ("জানতে",      "to know"),
+    "jante":        ("জানতে",      "to know"),
 }
 
 # Two-char folds applied before single-char folds. These are intentionally

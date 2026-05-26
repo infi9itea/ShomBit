@@ -74,7 +74,7 @@ def chunk_documents(docs, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=overlap,
-        separators=["\n## ", "\n### ", "\n\n", "\n", "। ", ". ", " ", ""],
+        separators=["\n## ", "\n### ", "\n\n", "\n|", "\n", "। ", ". ", " ", ""],
     )
     return splitter.split_documents(docs)
 
@@ -92,11 +92,16 @@ def load_markdown_docs(data_directory: str = DATA_DIR):
             file_path = os.path.join(root, file_name)
             try:
                 post = frontmatter.load(file_path)
+                inferred_category = (
+                    post.metadata.get("category")
+                    or os.path.splitext(file_name)[0].replace("_", " ").replace("-", " ").lower()
+                )
                 docs.append(Document(
                     page_content=post.content,
                     metadata={
                         **post.metadata,
                         "source": post.metadata.get("source", file_path),
+                        "category": inferred_category,
                         "type": "markdown",
                     }
                 ))
@@ -142,6 +147,8 @@ def _scrape_one(category: str, url: str) -> Document | None:
                 r = requests.get(url, headers=_HEADERS, timeout=SCRAPE_TIMEOUT)
                 r.raise_for_status()
                 text = _extract_text(r.text)
+                if len(text) < 200:
+                    log.warning("Very short content (%d chars) at %s — page may require JS rendering", len(text), url)
                 with open(cache, "w", encoding="utf-8") as f:
                     f.write(text)
                 log.info("scraped    %s (%d chars)", url, len(text))

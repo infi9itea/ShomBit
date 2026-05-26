@@ -3,7 +3,7 @@ import sys
 from huggingface_hub import login
 from config import HF_TOKEN, NGROK_TOKEN, DATA_DIR   # GROQ_API_KEY not needed here, rag_core reads it directly
 from rag_core import build_vectorstore, Reranker, load_llm, build_rag_chain
-from data_pipeline import load_json_docs, load_markdown_docs, chunk_documents, scrape_dynamic_docs
+from data_pipeline import load_markdown_docs, chunk_documents, scrape_dynamic_docs
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
@@ -37,17 +37,6 @@ llm = load_llm()
 log.info("Step 4/4  Assembling RAG chain…")
 rag_chain = build_rag_chain(llm, vectorstore, bm25, all_docs, reranker)
 
-# ── TEMPORARY DEBUG — remove after diagnosis ──────────────────────
-from rag_core import debug_query
-TEST_QUERIES = [
-    "Kono scholarship-er sujog ache ki?",        # put your failing queries here
-    "Computer Science-er bortoman tuition fee koto?",
-    "Undergraduate programgular bortoman vorti abedoner shesh shomoyshima ki?",
-]
-for q in TEST_QUERIES:
-    debug_query(q, vectorstore, bm25, all_docs, reranker)
-# ─────────────────────────────────────────────────────────────────
-
 def chat_fn(user_message: str, history: list[dict]):
     """history is a list of {"role", "content"} dicts (Gradio type='messages')."""
     if not user_message.strip():
@@ -65,9 +54,9 @@ def chat_fn(user_message: str, history: list[dict]):
     try:
         result = rag_chain(user_message, history=internal)
         answer = result["answer"]
-        sources = result["sources"]
-        if sources:
-            answer += "\n\n📚 **Sources:**\n" + "\n".join(f"- {s}" for s in sources)
+        display_sources = [s for s in result["sources"] if s.startswith("http")]
+        if display_sources:
+            answer += "\n\n📚 **Sources:**\n" + "\n".join(f"- {s}" for s in display_sources)
     except Exception as exc:
         log.exception("Error during inference")
         answer = f"⚠️ An error occurred: {exc}"
@@ -123,11 +112,16 @@ with gr.Blocks(title="EWU Assistant", theme=gr.themes.Soft()) as demo:
     clear_btn.click(lambda: ([], ""), None, [chatbot, msg_box])
 
 
+log.info("Launching Gradio server on 0.0.0.0:7860")
+demo.launch(server_name="0.0.0.0", server_port=7860, share=False, prevent_thread_lock=True)
+
 if NGROK_TOKEN:
     from pyngrok import ngrok as _ngrok
+    import time as _time
+    _time.sleep(1)  # give Gradio a moment to bind the port
     _ngrok.set_auth_token(NGROK_TOKEN)
     public_url = _ngrok.connect(7860).public_url
     log.info("Public URL: %s", public_url)
 
-log.info("Launching Gradio server on 0.0.0.0:7860")
-demo.launch(server_name="0.0.0.0", server_port=7860, share=False)
+import threading
+threading.Event().wait()
