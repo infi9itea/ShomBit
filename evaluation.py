@@ -345,6 +345,50 @@ def wilcoxon_compare(
             print(f"  {m:<20} error: {exc}")
 
 
+def score_gold_file(gold_path: str, out_csv: str, with_ragas: bool = True):
+    """Read a gold.jsonl (from run_queries_from_list) and compute all metrics.
+
+    No pipeline rebuild needed — the answers are already in the file.
+    """
+    gold = [json.loads(l) for l in open(gold_path, encoding="utf-8") if l.strip()]
+    rows: List[dict] = []
+    ragas_records: List[dict] = []
+    for ex in gold:
+        retrieved = ex["sources"]
+        relevant  = set(ex.get("relevant_sources", []))
+        row: dict = {
+            "question":  ex["question"],
+            "language":  ex.get("language", "unknown"),
+            "latency_s": ex.get("latency_s", float("nan")),
+            "answer":    ex["answer"],
+            "mrr":       mrr(retrieved, relevant),
+        }
+        for k in KS:
+            row[f"hit@{k}"]       = hit_at_k(retrieved, relevant, k)
+            row[f"recall@{k}"]    = recall_at_k(retrieved, relevant, k)
+            row[f"precision@{k}"] = precision_at_k(retrieved, relevant, k)
+            row[f"ndcg@{k}"]      = ndcg_at_k(retrieved, relevant, k)
+        gt = ex.get("ground_truth") or ex.get("reference_answer", "")
+        if gt:
+            row["token_f1"] = token_f1(ex["answer"], gt)
+            row["rouge_l"]  = rouge_l(ex["answer"], gt)
+        rows.append(row)
+        ragas_records.append({
+            "question":     ex["question"],
+            "answer":       ex["answer"],
+            "contexts":     ex["contexts"],
+            "ground_truth": gt,
+        })
+    _write_csv(rows, out_csv)
+    _print_summary(rows)
+    if with_ragas:
+        scores = run_ragas(ragas_records)
+        if scores:
+            print("\n=== RAGAS (LLM-judged) ===")
+            for k, v in scores.items():
+                print(f"  {k:<25} {v:.3f}")
+
+
 def _write_csv(rows: List[dict], path: str):
     import csv
     if not rows:

@@ -100,6 +100,37 @@ def load_pipeline(data_dir: str):
     return chain
 
 
+def run_queries_from_list(chain, queries: list[dict], out_jsonl: str) -> list[dict]:
+    """Run a hardcoded list of query dicts through the chain and save to JSONL.
+
+    Each dict must have: seq, language, question, ground_truth, relevant_sources.
+    """
+    results = []
+    with open(out_jsonl, "w", encoding="utf-8") as jf:
+        for i, q in enumerate(queries, 1):
+            log.info("[%d/%d] [%s] %s", i, len(queries), q["language"], q["question"][:70])
+            answer, sources, contexts, latency = run_query(chain, q["question"])
+            record = {
+                "seq":              q["seq"],
+                "question":         q["question"],
+                "language":         q["language"],
+                "answer":           answer,
+                "sources":          sources,
+                "contexts":         contexts,
+                "latency_s":        latency,
+                "ground_truth":     q.get("ground_truth", ""),
+                "relevant_sources": q.get("relevant_sources", []),
+            }
+            results.append(record)
+            jf.write(json.dumps(record, ensure_ascii=False) + "\n")
+            jf.flush()
+            log.info("  latency=%.2fs | %s", latency, answer[:80].replace("\n", " "))
+            if i < len(queries):
+                time.sleep(_INTER_QUERY_DELAY)
+    log.info("Saved %d records → %s", len(results), out_jsonl)
+    return results
+
+
 def read_queries(xlsx_path: str) -> list[dict]:
     """Parse query rows from the workbook. Expects columns A-J as in the original sheet."""
     wb = openpyxl.load_workbook(xlsx_path)
